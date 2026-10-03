@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lpr-cnn-practice"
+version = "0.1.0"
+description = "A CNN learning project for Chinese license plate recognition"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24,<3",
+  "opencv-python>=4.8,<5",
+  "torch>=2.2,<3",
+  "torchvision>=0.17,<1",
+]
+
+[project.scripts]
+lpr-data = "lpr.data:main"
+lpr-train = "lpr.train:main"
+lpr-evaluate = "lpr.evaluate:main"
+lpr-predict = "lpr.predict:main"
+lpr-inspect = "lpr.inspect:main"
+lpr-web = "lpr.web:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+lpr = ["static/*.html", "static/*.css", "static/*.js"]

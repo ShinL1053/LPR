@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102622">
+  <title>LPR Lab · 车牌识别练习</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="LPR Lab 首页"><span class="brand-icon">▦</span><span>LPR <strong>Lab</strong></span></a>
+    <nav aria-label="页面导航"><a href="#workspace">识别工作台</a><a href="#learn">理解卷积</a><a href="#setup">运行说明</a></nav>
+    <span class="topbar-note">本地运行 · 图片不留存</span>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="eyebrow-line"></span> CNN PRACTICE PROJECT</p>
+        <h1>从像素，<br><em>读出车牌号码。</em></h1>
+        <p class="hero-lead">上传一张图片，观察车牌定位与七位字符识别。往下还能动手移动卷积窗口，看看小小的滤波器怎样提取图像特征。</p>
+        <a class="hero-link" href="#workspace">进入识别工作台 <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="scan-line"></div>
+        <div class="focus-corner top-left"></div><div class="focus-corner top-right"></div>
+        <div class="focus-corner bottom-left"></div><div class="focus-corner bottom-right"></div>
+        <div class="plate-outline"><span class="plate-mark">CN</span><span class="plate-glyph">皖 A · · · · ·</span></div>
+        <div class="hero-art-caption"><span class="pulse"></span> IMAGE → FEATURES → CHARACTERS</div>
+      </div>
+    </section>
+
+    <section id="workspace" class="workspace section-wrap">
+      <div class="section-heading"><div><p class="section-kicker">01 / INFERENCE</p><h2>识别工作台</h2><p>支持整车图片与已裁剪的车牌图片。真实识别需要先训练模型。</p></div><span class="section-number">01</span></div>
+      <div class="model-status" role="status" aria-live="polite">
+        <div class="status-title"><span class="small-pulse"></span>模型状态</div>
+        <div class="status-items"><span id="recognizerStatus" class="status-chip waiting">识字模型：检查中</span><span id="detectorStatus" class="status-chip waiting">定位模型：检查中</span></div>
+        <p id="statusHint">正在读取本地模型状态…</p>
+      </div>
+
+      <div class="workspace-grid">
+        <section class="panel upload-panel" aria-labelledby="uploadHeading">
+          <div class="panel-top"><span class="panel-step">STEP 01</span><h3 id="uploadHeading">选择图片</h3></div>
+          <div class="mode-row" role="group" aria-label="识别模式">
+            <label><input type="radio" name="mode" value="full" checked><span>完整车辆图片</span></label>
+            <label><input type="radio" name="mode" value="crop"><span>裁剪车牌图片</span></label>
+          </div>
+          <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="选择或拖入图片">
+            <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+            <div id="dropPlaceholder" class="drop-placeholder"><span class="upload-icon" aria-hidden="true">↥</span><strong>拖入图片，或点击选择</strong><small>JPG / PNG / WebP · 最大 10 MB</small></div>
+            <canvas id="previewCanvas" aria-label="所选图片预览" hidden></canvas>
+          </div>
+          <div class="file-line"><span id="fileName">尚未选择图片</span><button id="clearFile" type="button" hidden>移除</button></div>
+          <button id="predictButton" class="primary-button" type="button" disabled>请先选择图片 <span aria-hidden="true">→</span></button>
+          <p id="inputHint" class="input-hint">完整车辆图片需要定位和识字两个模型。</p>
+        </section>
+
+        <section class="panel result-panel" aria-labelledby="resultHeading">
+          <div class="panel-top"><span class="panel-step">STEP 02</span><h3 id="resultHeading">识别结果</h3></div>
+          <div id="resultEmpty" class="result-empty"><div class="result-icon" aria-hidden="true">▤</div><strong>等待图像输入</strong><p>完成识别后，这里会显示车牌号码和定位结果。</p></div>
+          <div id="resultContent" class="result-content" hidden>
+            <p id="resultLabel" class="result-label">识别到的车牌</p>
+            <div id="plateResult" class="plate-result" aria-live="polite"></div>
+            <div id="resultMeta" class="result-meta"></div>
+            <p class="result-note">号码来自模型推理；请核对图片中实际车牌。</p>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="learn" class="learn-section">
+      <div class="section-wrap">
+        <div class="section-heading"><div><p class="section-kicker">02 / EXPLORE</p><h2>动手理解卷积</h2><p>点选左侧像素，再点右侧输出格，观察同一个 3×3 小窗口如何在图像上滑动。</p></div><span class="section-number">02</span></div>
+        <div class="learn-grid">
+          <div class="learn-intro"><span class="learn-tag">交互实验 · 与识别模型独立</span><h3>一个窗口，<br>重复看整张图。</h3><p>卷积核是一组共享的数字。它每次只看一小块区域，把对应数字相乘并相加，得到一个新的特征值。识字模型会在训练中学出自己的卷积核。</p><div class="kernel-switch" role="group" aria-label="卷积核类型"><button class="kernel-option active" data-kernel="edge" type="button">竖向边缘</button><button class="kernel-option" data-kernel="blur" type="button">区域求和</button></div></div>
+          <div class="demo-card"><div class="demo-column"><span class="demo-label">输入像素 · 点击切换</span><div id="inputGrid" class="pixel-grid" aria-label="可编辑的五乘五输入矩阵"></div></div><span class="demo-arrow" aria-hidden="true">→</span><div class="demo-column"><span class="demo-label">3×3 卷积核</span><div id="kernelGrid" class="kernel-grid"></div></div><span class="demo-arrow" aria-hidden="true">→</span><div class="demo-column"><span class="demo-label">输出特征 · 点击查看</span><div id="outputGrid" class="output-grid" aria-label="三乘三输出特征矩阵"></div></div><p id="formula" class="formula"></p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="setup" class="setup-section section-wrap"><div class="section-heading"><div><p class="section-kicker">03 / GET STARTED</p><h2>准备真实识别</h2><p>页面已能运行；车牌识别需要训练好的权重文件。</p></div><span class="section-number">03</span></div><div class="setup-grid"><div class="setup-item"><span>01</span><h3>准备数据</h3><p>下载 CCPD 图片和官方训练、验证划分。原始图片只保存在本机。</p></div><div class="setup-item"><span>02</span><h3>训练模型</h3><p>先训练识字 CNN，再训练车牌定位模型。权重保存到 outputs 目录后，页面会自动发现。</p></div><div class="setup-item"><span>03</span><h3>上传图片</h3><p>选择对应模式，查看完整号码和位置。若未检出，页面会直接说明。</p></div></div><p class="setup-foot">具体命令见项目 <a href="https://github.com/detectRecog/CCPD" target="_blank" rel="noopener noreferrer">CCPD 数据说明 ↗</a> 与本地 README.md。</p></section>
+  </main>
+  <footer><span>LPR LAB</span><span>学习卷积神经网络的本地实验项目</span></footer>
+</body>
+</html>
