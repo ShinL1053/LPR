@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from lpr.ccpd import assert_disjoint, decode_indices, load_split, parse_filename
+from scripts.finetune_province import validate_splits
 
 
 NAME = "025-95_113-154&383_386&473-386&473_177&454_154&383_363&402-0_0_22_27_27_33_16-37-15.jpg"
@@ -16,6 +17,12 @@ class CCPDTests(unittest.TestCase):
         self.assertEqual(record.plate, decode_indices(list(record.indices)))
         self.assertTrue(record.plate.startswith("皖A"))
         self.assertEqual(len(record.plate), 7)
+
+    def test_redistributed_comma_coordinates(self):
+        mirrored = "test_0001_0001-95_113-154,383_386,473-386,473_177,454_154,383_363,402-0_0_22_27_27_33_16-37-15_ccpd_base_000001.jpg"
+        record = parse_filename(mirrored, (600, 600))
+        self.assertEqual(record.box, (154, 383, 386, 473))
+        self.assertEqual(record.indices, (0, 0, 22, 27, 27, 33, 16))
 
     def test_invalid_annotations_are_rejected(self):
         with self.assertRaises(ValueError):
@@ -42,7 +49,16 @@ class CCPDTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_split(root, split, limit=0)
 
+    def test_correction_training_rejects_validation_leakage(self):
+        train = parse_filename(NAME)
+        same_plate_different_image = parse_filename(NAME.replace("025-", "026-", 1))
+        different_plate = parse_filename(NAME.replace("0_0_22_27_27_33_16", "0_0_23_27_27_33_16"))
+        with self.assertRaises(ValueError):
+            validate_splits([train], [train])
+        with self.assertRaises(ValueError):
+            validate_splits([train], [same_plate_different_image])
+        validate_splits([train], [different_plate])
+
 
 if __name__ == "__main__":
     unittest.main()
-

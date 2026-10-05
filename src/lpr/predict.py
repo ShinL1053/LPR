@@ -10,9 +10,11 @@ import torch
 
 from .ccpd import decode_indices
 from .datasets import image_tensor
-from .images import crop_box, draw_box, normalize_plate, read_rgb, write_rgb
+from .images import blue_plate_box, crop_box, draw_box, normalize_plate, read_rgb, write_rgb
 from .models import predicted_indices
 from .runtime import load_checkpoint, top_detection
+
+MIN_BLUE_FALLBACK_SCORE = 0.2
 
 
 @torch.no_grad()
@@ -21,12 +23,33 @@ def infer(image: np.ndarray, recognizer, detector=None, device: str = "cpu", sco
         plate_image = image
         box = None
         detection_score = None
+        detection_source = None
     else:
         detection = detector([image_tensor(image).to(device)])[0]
         selected = top_detection(detection, score_threshold)
         if selected is None:
-            return {"status": "no_plate", "reason": "detector found no plate above score threshold"}
-        raw_box, detection_score = selected
+            candidate = top_detection(detection, MIN_BLUE_FALLBACK_SCORE)
+            raw_box = blue_plate_box(image, tuple(int(value) for value in candidate[0])) if candidate else None
+            if raw_box is None:
+                return {"status": "no_plate", "reason": "detector found no blue plate with positional support"}
+            detection_score = None
+            detection_source = "blue_color"
+        else:
+            raw_box, detection_score = selected
+            detection_source = "cnn"
+            nearby_blue = blue_plate_box(image, tuple(int(value) for value in raw_box))
+            if nearby_blue is not None:
+                # Extend only a clearly clipped side; small color/detector
+                # disagreements are common and should leave the crop intact.
+                detected_width = raw_box[2] - raw_box[0]
+                left_gap = (raw_box[0] - nearby_blue[0]) / detected_width
+                right_gap = (nearby_blue[2] - raw_box[2]) / detected_width
+                if 0.08 <= left_gap <= 0.2 and abs(right_gap) <= 0.05:
+                    raw_box = (nearby_blue[0], raw_box[1], raw_box[2], raw_box[3])
+                    detection_source = "cnn_blue_refined"
+                elif 0.08 <= right_gap <= 0.2 and abs(left_gap) <= 0.05:
+                    raw_box = (raw_box[0], raw_box[1], nearby_blue[2], raw_box[3])
+                    detection_source = "cnn_blue_refined"
         height, width = image.shape[:2]
         x1 = max(0, min(width - 1, int(raw_box[0])))
         y1 = max(0, min(height - 1, int(raw_box[1])))
@@ -35,12 +58,16 @@ def infer(image: np.ndarray, recognizer, detector=None, device: str = "cpu", sco
         box = (x1, y1, x2, y2)
         plate_image = crop_box(image, box)
     plate_input = image_tensor(normalize_plate(plate_image)).unsqueeze(0).to(device)
-    indices = predicted_indices(recognizer(plate_input))[0].cpu().tolist()
+    logits = recognizer(plate_input)
+    indices = predicted_indices(logits)[0].cpu().tolist()
+    province_score = float(logits[0].softmax(dim=1)[0].max())
     return {
         "status": "ok",
         "plate": decode_indices(indices),
+        "province_uncertain": province_score < 0.6,
         "box": list(box) if box is not None else None,
         "detection_score": detection_score,
+        "detection_source": detection_source,
     }
 
 
@@ -71,4 +98,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

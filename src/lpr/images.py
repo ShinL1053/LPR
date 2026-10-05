@@ -55,9 +55,43 @@ def normalize_plate(image: np.ndarray) -> np.ndarray:
     return canvas
 
 
+def blue_plate_box(
+    image: np.ndarray, reference_box: tuple[int, int, int, int]
+) -> tuple[int, int, int, int] | None:
+    """Find a blue plate-shaped region overlapping a detector candidate."""
+    height, width = image.shape[:2]
+    hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+    mask = cv2.inRange(hsv, (90, 60, 30), (140, 255, 255))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, width // 100), max(3, height // 100)))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates = []
+    for contour in contours:
+        x, y, box_width, box_height = cv2.boundingRect(contour)
+        area = box_width * box_height
+        aspect = box_width / box_height
+        if not (0.003 * width * height <= area <= 0.6 * width * height and 1.5 <= aspect <= 5.5):
+            continue
+        fill = cv2.countNonZero(mask[y:y + box_height, x:x + box_width]) / area
+        if fill < 0.45:
+            continue
+        rx1, ry1, rx2, ry2 = reference_box
+        intersection = max(0, min(x + box_width, rx2) - max(x, rx1)) * max(0, min(y + box_height, ry2) - max(y, ry1))
+        union = area + (rx2 - rx1) * (ry2 - ry1) - intersection
+        overlap = intersection / union if union > 0 else 0
+        if overlap < 0.4:
+            continue
+        candidates.append((overlap, x, y, box_width, box_height))
+    if not candidates:
+        return None
+    _, x, y, box_width, box_height = max(candidates)
+    inset_x = max(1, round(box_width * 0.008))
+    inset_y = max(1, round(box_height * 0.015))
+    return x + inset_x, y + inset_y, x + box_width - inset_x, y + box_height - inset_y
+
+
 def draw_box(image: np.ndarray, box: tuple[int, int, int, int]) -> np.ndarray:
     marked = image.copy()
     x1, y1, x2, y2 = (int(value) for value in box)
     cv2.rectangle(marked, (x1, y1), (x2, y2), (0, 255, 0), 2)
     return marked
-

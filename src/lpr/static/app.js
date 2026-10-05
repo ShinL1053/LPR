@@ -150,7 +150,14 @@ predictButton.addEventListener('click', async () => {
       resultContent.hidden = false;
       resultLabel.textContent = '识别到的车牌';
       plateResult.replaceChildren(...Array.from(result.plate, char => { const span = document.createElement('span'); span.textContent = char; return span; }));
-      resultMeta.textContent = result.box ? `定位位置：(${result.box[0]}, ${result.box[1]}) 至 (${result.box[2]}, ${result.box[3]}) · 检测分数：${result.detection_score.toFixed(3)}` : '裁剪车牌模式 · 已识别上传图片中的字符';
+      let location = '裁剪车牌模式 · 已识别上传图片中的字符';
+      if (result.box) {
+        const detectorDetail = result.detection_source === 'blue_color'
+          ? '蓝牌颜色定位（请核对定位框）'
+          : `检测分数：${result.detection_score.toFixed(3)}${result.detection_source === 'cnn_blue_refined' ? ' · 蓝色边界修正' : ''}`;
+        location = `定位位置：(${result.box[0]}, ${result.box[1]}) 至 (${result.box[2]}, ${result.box[3]}) · ${detectorDetail}`;
+      }
+      resultMeta.textContent = result.province_uncertain ? `${location} · 省份字把握较低，请核对首字` : location;
     }
   } catch (error) {
     showMessage('暂时无法识别', error.message);

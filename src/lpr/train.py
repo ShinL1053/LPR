@@ -2,27 +2,39 @@
 
 import argparse
 import json
+from collections import Counter
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from .ccpd import assert_disjoint, load_split
 from .datasets import DetectionDataset, RecognitionDataset, detection_collate
 from .models import PlateCNN, make_detector, predicted_indices, recognition_loss
-from .runtime import box_iou, save_checkpoint, seed_everything, top_detection
+from .runtime import box_iou, load_checkpoint, save_checkpoint, seed_everything, top_detection
 
 
 @torch.no_grad()
 def score_recognizer(model, loader, device: str) -> dict:
     model.eval()
     characters = plates = count = 0
+    province_correct = non_anhui_correct = non_anhui_count = 0
     for images, targets in loader:
         predictions = predicted_indices(model(images.to(device))).cpu()
         equal = predictions.eq(targets)
         characters += int(equal.sum())
         plates += int(equal.all(dim=1).sum())
+        province_correct += int(equal[:, 0].sum())
+        non_anhui = targets[:, 0] != 0
+        non_anhui_correct += int(equal[non_anhui, 0].sum())
+        non_anhui_count += int(non_anhui.sum())
         count += len(targets)
-    return {"character_accuracy": characters / (7 * count), "plate_accuracy": plates / count, "samples": count}
+    return {
+        "character_accuracy": characters / (7 * count),
+        "plate_accuracy": plates / count,
+        "province_accuracy": province_correct / count,
+        "non_anhui_province_accuracy": non_anhui_correct / non_anhui_count if non_anhui_count else None,
+        "samples": count,
+    }
 
 
 @torch.no_grad()
@@ -44,11 +56,20 @@ def score_detector(model, loader, device: str, threshold: float = 0.5) -> dict:
 
 
 def train_recognizer(args, train_records, val_records) -> None:
-    train_loader = DataLoader(RecognitionDataset(train_records), batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+    sampler = None
+    if args.balance_provinces:
+        counts = Counter(record.indices[0] for record in train_records)
+        weights = [counts[record.indices[0]] ** -0.5 for record in train_records]
+        sampler = WeightedRandomSampler(weights, len(train_records), replacement=True, generator=torch.Generator().manual_seed(args.seed))
+    train_loader = DataLoader(RecognitionDataset(train_records), batch_size=args.batch_size, shuffle=sampler is None, sampler=sampler, num_workers=args.workers)
     val_loader = DataLoader(RecognitionDataset(val_records), batch_size=args.batch_size, num_workers=args.workers)
-    model = PlateCNN().to(args.device)
+    model = PlateCNN()
+    if args.init_recognizer:
+        initial, _ = load_checkpoint(args.init_recognizer, "recognizer", "cpu")
+        model.load_state_dict(initial.state_dict())
+    model = model.to(args.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    best = -1.0
+    best = (-1.0, -1.0, -1.0)
     for epoch in range(1, args.epochs + 1):
         model.train()
         total_loss = 0.0
@@ -61,9 +82,14 @@ def train_recognizer(args, train_records, val_records) -> None:
             total_loss += float(loss.detach()) * len(targets)
         metrics = score_recognizer(model, val_loader, args.device)
         print(json.dumps({"epoch": epoch, "train_loss": total_loss / len(train_records), "validation": metrics}, ensure_ascii=False))
-        if metrics["plate_accuracy"] > best:
-            best = metrics["plate_accuracy"]
-            save_checkpoint(args.output, model, "recognizer", epoch=epoch, seed=args.seed, validation=metrics)
+        selection = args.selection or ("minority" if args.balance_provinces else "plate")
+        if selection == "minority":
+            score = (metrics["non_anhui_province_accuracy"] or 0.0, metrics["plate_accuracy"], metrics["character_accuracy"])
+        else:
+            score = (metrics["plate_accuracy"], metrics["non_anhui_province_accuracy"] or 0.0, metrics["character_accuracy"])
+        if score > best:
+            best = score
+            save_checkpoint(args.output, model, "recognizer", epoch=epoch, seed=args.seed, balance_provinces=args.balance_provinces, validation=metrics)
 
 
 def train_detector(args, train_records, val_records) -> None:
@@ -71,7 +97,7 @@ def train_detector(args, train_records, val_records) -> None:
     val_loader = DataLoader(DetectionDataset(val_records), batch_size=1, num_workers=args.workers, collate_fn=detection_collate)
     model = make_detector(pretrained_backbone=args.pretrained_backbone).to(args.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    best = -1.0
+    best = (-1.0, -1.0, -1.0)
     for epoch in range(1, args.epochs + 1):
         model.train()
         total_loss = 0.0
@@ -88,8 +114,9 @@ def train_detector(args, train_records, val_records) -> None:
             total_loss += float(loss.detach()) * len(images)
         metrics = score_detector(model, val_loader, args.device)
         print(json.dumps({"epoch": epoch, "train_loss": total_loss / len(train_records), "validation": metrics}, ensure_ascii=False))
-        if metrics["iou_at_0.5"] > best:
-            best = metrics["iou_at_0.5"]
+        score = (metrics["iou_at_0.5"], metrics["mean_iou"], metrics["detection_rate"])
+        if score > best:
+            best = score
             save_checkpoint(args.output, model, "detector", epoch=epoch, seed=args.seed, validation=metrics)
 
 
@@ -108,9 +135,14 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--device", default="cpu", choices=("cpu", "cuda", "mps"))
     parser.add_argument("--pretrained-backbone", action="store_true", help="download ImageNet backbone weights for detector")
+    parser.add_argument("--balance-provinces", action="store_true", help="sample rare province labels more often during recognizer training")
+    parser.add_argument("--init-recognizer", help="optional recognizer checkpoint to continue training")
+    parser.add_argument("--selection", choices=("plate", "minority"), help="validation metric for selecting a recognizer checkpoint")
     args = parser.parse_args()
     if args.epochs < 1 or args.batch_size < 1 or args.lr <= 0 or args.workers < 0:
         parser.error("epochs, batch-size, lr must be positive; workers must be nonnegative")
+    if args.kind != "recognizer" and (args.balance_provinces or args.init_recognizer or args.selection):
+        parser.error("--balance-provinces, --init-recognizer and --selection apply only to recognizer training")
     seed_everything(args.seed)
     train_records = load_split(args.data_root, args.train, args.limit)
     val_records = load_split(args.data_root, args.val, args.limit)

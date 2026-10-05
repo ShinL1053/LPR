@@ -31,7 +31,9 @@ class PlateRecord:
 
 
 def _point(value: str) -> tuple[int, int]:
-    parts = value.split("&")
+    # The official CCPD archive uses "&"; some redistributed images use ",".
+    separator = "&" if "&" in value else ","
+    parts = value.split(separator)
     if len(parts) != 2:
         raise ValueError(f"invalid coordinate: {value}")
     x, y = (int(part) for part in parts)
